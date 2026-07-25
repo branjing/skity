@@ -250,6 +250,17 @@ UniqueCTFontRef ct_font_copy_with_size(CTFontRef base, CGFloat text_size) {
   CFDictionarySetValue(attr.get(), CFSTR("NSCTFontUnscaledTrackingAttribute"),
                        tracking_number.get());
 
+  // Preserve the resolved resource and face identity.
+  UniqueCFRef<CFTypeRef> font_url(
+      CTFontCopyAttribute(base, kCTFontURLAttribute));
+  if (font_url && CFGetTypeID(font_url.get()) == CFURLGetTypeID()) {
+    CFDictionarySetValue(attr.get(), kCTFontURLAttribute, font_url.get());
+  }
+  UniqueCFRef<CFStringRef> font_name(CTFontCopyPostScriptName(base));
+  if (font_name) {
+    CFDictionarySetValue(attr.get(), kCTFontNameAttribute, font_name.get());
+  }
+
   UniqueCFRef<CTFontDescriptorRef> desc(
       CTFontDescriptorCreateWithAttributes(attr.get()));
 
