@@ -17,9 +17,7 @@ namespace skity {
 // The underlying port accepts what kind of scale ratio.
 enum class PortScaleType { kFull, kVertical };
 
-// Make sure the objects has no padding.
 struct ScalerContextDesc {
-  // hash start
   uint32_t typeface_id;
   float text_size;
   float scale_x;
@@ -38,7 +36,6 @@ struct ScalerContextDesc {
 
   uint8_t fake_bold;
   uint8_t hinting;
-  // hash end
 
   friend inline bool operator==(const ScalerContextDesc& lhs,
                                 const ScalerContextDesc& rhs) {
@@ -79,22 +76,6 @@ struct ScalerContextDesc {
     return static_cast<Font::FontHinting>(hinting);
   }
 };
-
-static_assert(sizeof(ScalerContextDesc) ==
-                  sizeof(ScalerContextDesc::typeface_id) +
-                      sizeof(ScalerContextDesc::text_size) +
-                      sizeof(ScalerContextDesc::scale_x) +
-                      sizeof(ScalerContextDesc::skew_x) +
-                      sizeof(ScalerContextDesc::transform) +
-                      sizeof(ScalerContextDesc::context_scale) +
-                      sizeof(ScalerContextDesc::foreground_color) +
-                      sizeof(ScalerContextDesc::stroke_width) +
-                      sizeof(ScalerContextDesc::miter_limit) +
-                      sizeof(ScalerContextDesc::cap) +
-                      sizeof(ScalerContextDesc::join) +
-                      sizeof(ScalerContextDesc::fake_bold) +
-                      sizeof(ScalerContextDesc::hinting),
-              "ScalerContextDesc must have no padding");
 
 }  // namespace skity
 

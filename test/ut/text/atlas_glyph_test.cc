@@ -15,7 +15,7 @@
 
 namespace skity {
 
-TEST(AtlasGlyphTest, GlyphKeyHashIgnoresPadding) {
+TEST(AtlasGlyphTest, GlyphKeyHashIgnoresObjectPadding) {
   // Allocate two buffers with different "garbage" bytes, ensuring proper
   // alignment.
   alignas(GlyphKey) char buffer1[sizeof(GlyphKey)];
@@ -46,12 +46,23 @@ TEST(AtlasGlyphTest, GlyphKeyHashIgnoresPadding) {
 
   GlyphKey::Hash hasher;
 
-  // If the hash function hashes the entire struct including padding,
-  // this EXPECT_EQ will fail.
+  EXPECT_TRUE(GlyphKey::Equal{}(*key1, *key2));
+  // Hashing the entire GlyphKey object would include the padding between the
+  // 16-bit glyph ID and the aligned descriptor and fail this comparison.
   EXPECT_EQ(hasher(*key1), hasher(*key2));
 
   key1->~GlyphKey();
   key2->~GlyphKey();
+}
+
+TEST(ScalerContextDescTest, HashMatchesSemanticEquality) {
+  ScalerContextDesc positive_zero{};
+  ScalerContextDesc negative_zero{};
+  positive_zero.skew_x = 0.f;
+  negative_zero.skew_x = -0.f;
+
+  ASSERT_EQ(positive_zero, negative_zero);
+  EXPECT_EQ(positive_zero.hash(), negative_zero.hash());
 }
 
 TEST(GlyphBitmapDataTest, ResolvesTightAndExplicitRowBytes) {
@@ -66,6 +77,26 @@ TEST(GlyphBitmapDataTest, ResolvesTightAndExplicitRowBytes) {
 
   bitmap.row_bytes = 16;
   EXPECT_EQ(bitmap.RowBytes(), 16u);
+}
+
+TEST(AtlasBitmapTest, ReusesSemanticEquivalentGlyphKey) {
+  uint8_t source = 0xFF;
+  GlyphBitmapData bitmap;
+  bitmap.width = 1;
+  bitmap.height = 1;
+  bitmap.buffer = &source;
+  bitmap.format = BitmapFormat::kGray8;
+
+  ScalerContextDesc positive_zero{};
+  ScalerContextDesc negative_zero{};
+  positive_zero.skew_x = 0.f;
+  negative_zero.skew_x = -0.f;
+
+  AtlasBitmap atlas(16, 16, 1);
+  const glm::ivec4 inserted =
+      atlas.GenerateGlyphRegion(GlyphKey(7, positive_zero), bitmap);
+  ASSERT_NE(inserted, INVALID_LOC);
+  EXPECT_EQ(atlas.GetGlyphRegion(GlyphKey(7, negative_zero)), inserted);
 }
 
 TEST(AtlasBitmapTest, CopiesGlyphWithPaddedRows) {

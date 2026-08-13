@@ -6,8 +6,8 @@
 
 #include <cmath>
 #include <cstdlib>
+#include <functional>
 
-#include "src/base/hash.hpp"
 #include "src/geometry/math.hpp"
 #include "src/text/scaler_context_cache.hpp"
 
@@ -21,10 +21,36 @@ Color GetPaintTextColor(const Paint& paint) {
                             : paint.GetFillColor());
 }
 
+template <typename T>
+void HashCombine(size_t* seed, const T& value) {
+  *seed ^= std::hash<T>{}(value) + 0x9e3779b9u + (*seed << 6u) +
+           (*seed >> 2u);
+}
+
 }  // namespace
 
 size_t ScalerContextDesc::hash() const {
-  return skity::Hash32(this, sizeof(ScalerContextDesc));
+  // Keep this list in sync with operator==. Hashing the object representation
+  // would make cache identity depend on padding and on distinct byte patterns
+  // for equal values such as +0.0f and -0.0f.
+  size_t result = 0;
+  HashCombine(&result, typeface_id);
+  HashCombine(&result, text_size);
+  HashCombine(&result, scale_x);
+  HashCombine(&result, skew_x);
+  HashCombine(&result, transform.GetScaleX());
+  HashCombine(&result, transform.GetSkewX());
+  HashCombine(&result, transform.GetSkewY());
+  HashCombine(&result, transform.GetScaleY());
+  HashCombine(&result, context_scale);
+  HashCombine(&result, foreground_color);
+  HashCombine(&result, stroke_width);
+  HashCombine(&result, miter_limit);
+  HashCombine(&result, static_cast<uint8_t>(cap));
+  HashCombine(&result, static_cast<uint8_t>(join));
+  HashCombine(&result, fake_bold);
+  HashCombine(&result, hinting);
+  return result;
 }
 
 Color ScalerContextDesc::GetGlyphImageForegroundColor(const Font& font,
@@ -41,7 +67,7 @@ Color ScalerContextDesc::GetGlyphImageForegroundColor(const Font& font,
 
 ScalerContextDesc ScalerContextDesc::MakeCanonicalized(const Font& font,
                                                        const Paint& paint) {
-  ScalerContextDesc desc;
+  ScalerContextDesc desc{};
   desc.typeface_id = font.GetTypeface()->TypefaceId();
   desc.text_size = font.GetSize();
   desc.scale_x = font.GetScaleX();
@@ -63,7 +89,7 @@ ScalerContextDesc ScalerContextDesc::MakeCanonicalized(const Font& font,
 ScalerContextDesc ScalerContextDesc::MakeTransformed(
     const Font& font, const Paint& paint, float context_scale,
     const Matrix22& transform) {
-  ScalerContextDesc desc;
+  ScalerContextDesc desc{};
   desc.typeface_id = font.GetTypeface()->TypefaceId();
   desc.text_size = font.GetSize();
   desc.scale_x = font.GetScaleX();
