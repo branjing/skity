@@ -23,8 +23,7 @@ Color GetPaintTextColor(const Paint& paint) {
 
 template <typename T>
 void HashCombine(size_t* seed, const T& value) {
-  *seed ^= std::hash<T>{}(value) + 0x9e3779b9u + (*seed << 6u) +
-           (*seed >> 2u);
+  *seed ^= std::hash<T>{}(value) + 0x9e3779b9u + (*seed << 6u) + (*seed >> 2u);
 }
 
 }  // namespace
@@ -51,8 +50,6 @@ size_t ScalerContextDesc::hash() const {
   HashCombine(&result, fake_bold);
   HashCombine(&result, hinting);
   HashCombine(&result, subpixel_positioning);
-  HashCombine(&result, subpixel_x_phase);
-  HashCombine(&result, subpixel_y_phase);
   HashCombine(&result, baseline_snap);
   HashCombine(&result, edging);
   return result;
@@ -88,8 +85,6 @@ ScalerContextDesc ScalerContextDesc::MakeCanonicalized(const Font& font,
   desc.context_scale = 1.0f;
   desc.hinting = static_cast<uint8_t>(font.GetHinting());
   desc.subpixel_positioning = font.IsSubpixel() ? 1 : 0;
-  desc.subpixel_x_phase = 0;
-  desc.subpixel_y_phase = 0;
   desc.baseline_snap = font.IsBaselineSnap() ? 1 : 0;
   desc.edging = static_cast<uint8_t>(font.GetEdging());
 
@@ -120,8 +115,6 @@ ScalerContextDesc ScalerContextDesc::MakeTransformed(
   desc.context_scale = context_scale;
   desc.hinting = static_cast<uint8_t>(font.GetHinting());
   desc.subpixel_positioning = font.IsSubpixel() ? 1 : 0;
-  desc.subpixel_x_phase = 0;
-  desc.subpixel_y_phase = 0;
   desc.baseline_snap = font.IsBaselineSnap() ? 1 : 0;
   desc.edging = static_cast<uint8_t>(font.GetEdging());
 

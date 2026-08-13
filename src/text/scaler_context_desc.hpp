@@ -37,8 +37,6 @@ struct ScalerContextDesc {
   uint8_t fake_bold;
   uint8_t hinting;
   uint8_t subpixel_positioning;
-  uint8_t subpixel_x_phase;
-  uint8_t subpixel_y_phase;
   uint8_t baseline_snap;
   uint8_t edging;
 
@@ -54,8 +52,6 @@ struct ScalerContextDesc {
            lhs.foreground_color == rhs.foreground_color &&
            lhs.hinting == rhs.hinting &&
            lhs.subpixel_positioning == rhs.subpixel_positioning &&
-           lhs.subpixel_x_phase == rhs.subpixel_x_phase &&
-           lhs.subpixel_y_phase == rhs.subpixel_y_phase &&
            lhs.baseline_snap == rhs.baseline_snap && lhs.edging == rhs.edging;
   }
 

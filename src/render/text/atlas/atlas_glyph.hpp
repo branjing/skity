@@ -5,12 +5,13 @@
 #ifndef SRC_RENDER_TEXT_ATLAS_ATLAS_GLYPH_HPP
 #define SRC_RENDER_TEXT_ATLAS_ATLAS_GLYPH_HPP
 
-#include <glm/glm.hpp>
 #include <functional>
+#include <glm/glm.hpp>
 #include <memory>
 #include <skity/text/glyph.hpp>
 #include <skity/text/typeface.hpp>
 
+#include "src/text/packed_glyph_id.hpp"
 #include "src/text/scaler_context_desc.hpp"
 
 namespace skity {
@@ -61,16 +62,19 @@ struct GlyphRegion {
 };
 
 struct GlyphKey {
-  const GlyphID glyph_id;
+  const PackedGlyphID packed_glyph_id;
   const ScalerContextDesc scaler_context_desc;
 
+  GlyphKey(PackedGlyphID id, const ScalerContextDesc& desc)
+      : packed_glyph_id(id), scaler_context_desc(desc) {}
+
   GlyphKey(GlyphID id, const ScalerContextDesc& desc)
-      : glyph_id(id), scaler_context_desc(desc) {}
+      : GlyphKey(PackedGlyphID(id), desc) {}
 
   struct Hash {
     std::size_t operator()(const GlyphKey& key) const {
       size_t result = key.scaler_context_desc.hash();
-      result ^= std::hash<GlyphID>{}(key.glyph_id) + 0x9e3779b9u +
+      result ^= PackedGlyphID::Hash{}(key.packed_glyph_id) + 0x9e3779b9u +
                 (result << 6u) + (result >> 2u);
       return result;
     }
@@ -78,7 +82,7 @@ struct GlyphKey {
 
   struct Equal {
     bool operator()(const GlyphKey& lhs, const GlyphKey& rhs) const {
-      return lhs.glyph_id == rhs.glyph_id &&
+      return lhs.packed_glyph_id == rhs.packed_glyph_id &&
              lhs.scaler_context_desc == rhs.scaler_context_desc;
     }
   };
