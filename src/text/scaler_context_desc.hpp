@@ -36,6 +36,11 @@ struct ScalerContextDesc {
 
   uint8_t fake_bold;
   uint8_t hinting;
+  uint8_t subpixel_positioning;
+  uint8_t subpixel_x_phase;
+  uint8_t subpixel_y_phase;
+  uint8_t baseline_snap;
+  uint8_t edging;
 
   friend inline bool operator==(const ScalerContextDesc& lhs,
                                 const ScalerContextDesc& rhs) {
@@ -47,7 +52,11 @@ struct ScalerContextDesc {
            lhs.context_scale == rhs.context_scale && lhs.cap == rhs.cap &&
            lhs.join == rhs.join && lhs.fake_bold == rhs.fake_bold &&
            lhs.foreground_color == rhs.foreground_color &&
-           lhs.hinting == rhs.hinting;
+           lhs.hinting == rhs.hinting &&
+           lhs.subpixel_positioning == rhs.subpixel_positioning &&
+           lhs.subpixel_x_phase == rhs.subpixel_x_phase &&
+           lhs.subpixel_y_phase == rhs.subpixel_y_phase &&
+           lhs.baseline_snap == rhs.baseline_snap && lhs.edging == rhs.edging;
   }
 
   friend inline bool operator!=(const ScalerContextDesc& lhs,
@@ -75,8 +84,9 @@ struct ScalerContextDesc {
   Font::FontHinting GetHinting() const {
     return static_cast<Font::FontHinting>(hinting);
   }
-};
 
+  Font::Edging GetEdging() const { return static_cast<Font::Edging>(edging); }
+};
 }  // namespace skity
 
 #endif  // SRC_TEXT_SCALER_CONTEXT_DESC_HPP
