@@ -15,6 +15,7 @@
 #include "harness/font/artifact/artifact_writer.hpp"
 #include "harness/font/artifact/json_io.hpp"
 #include "harness/font/case/case_document.hpp"
+#include "harness/font/case/font_manager_contract.hpp"
 #include "harness/font/case/validation.hpp"
 
 namespace skity {
@@ -1488,9 +1489,61 @@ CompareResult RunCompare(const CompareRequest& request) {
     return result;
   }
 
+  ValidationContext match_errors;
+  ValidateFontManagerResult(case_root, expected_root, &match_errors);
+  if (!match_errors.IsValid()) {
+    auto failure = BuildInputFailure(
+        case_validation.case_id, backend, request, "artifact_contract",
+        "expectation_failed", "font manager result violates case expectation");
+    failure.report["validation_errors"] = match_errors.ToJson();
+    return failure;
+  }
   CompareConfig config = ParseCompareConfig(case_root);
   std::vector<Diff> diffs;
   RunCategoryCompare(expected_root, actual_root, config, &diffs);
+  if (case_root["font_manager_expectation"].isMember("inventory_count")) {
+    auto names = [](const Json::Value& source) {
+      std::vector<std::string> sorted;
+      for (const auto& name : source) {
+        sorted.push_back(name.asString());
+      }
+      std::sort(sorted.begin(), sorted.end());
+      Json::Value result(Json::arrayValue);
+      for (const auto& name : sorted) {
+        result.append(name);
+      }
+      return result;
+    };
+    auto expected = names(
+        expected_root["font_manager_probe"]["font_manager"]["family_names"]);
+    auto actual = names(
+        actual_root["font_manager_probe"]["font_manager"]["family_names"]);
+    CompareSelectionSubset(expected, actual,
+                           "font_manager_probe.font_manager.family_names",
+                           "exact", &diffs);
+  }
+  if (case_root["font_manager_expectation"].isMember("style_count")) {
+    const char* key =
+        case_root["font_manager_request"]["entry"] == "MatchFamily"
+            ? "style_set"
+            : "create_style_set";
+    const auto& expected =
+        expected_root["font_manager_probe"]["operation"][key]["styles"];
+    const auto& actual =
+        actual_root["font_manager_probe"]["operation"][key]["styles"];
+    for (Json::ArrayIndex i = 0; i < expected.size(); ++i) {
+      CompareSelectionSubset(expected[i]["style"], actual[i]["style"],
+                             "font_manager_probe.operation.styles[" +
+                                 std::to_string(i) + "].style",
+                             "exact", &diffs);
+      CompareSelectionSubset(
+          NormalizeTypefaceSelection(expected[i]["create_typeface"]),
+          NormalizeTypefaceSelection(actual[i]["create_typeface"]),
+          "font_manager_probe.operation.styles[" + std::to_string(i) +
+              "].create_typeface",
+          "exact", &diffs);
+    }
+  }
 
   CompareResult result;
   result.case_id = case_validation.case_id;

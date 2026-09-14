@@ -19,6 +19,7 @@
 #include "harness/font/compare/compare_engine.hpp"
 #include "harness/font/platform/coretext/env_info.hpp"
 #include "harness/font/platform/directwrite/env_info.hpp"
+#include "harness/font/platform/linux/env_info.hpp"
 #include "harness/font/probe/font_manager_probe.hpp"
 #include "harness/font/probe/glyph_image_probe.hpp"
 #include "harness/font/probe/glyph_path_probe.hpp"
@@ -991,6 +992,9 @@ int RunPlatformInfoCommand(int argc, char** argv, const std::string& command) {
     report = command == "list-fonts"
                  ? skity::font_harness::BuildDirectWriteFontList(request)
                  : skity::font_harness::BuildDirectWriteEnvInfo(request);
+  } else if (backend == "freetype" || backend == "fontconfig") {
+    report = skity::font_harness::BuildLinuxEnvInfo(repo_root, backend,
+                                                    command == "list-fonts");
   } else {
     report = BuildUnsupportedBackendReport(
         backend, command == "list-fonts" ? "font_list_fonts" : "font_env_info");

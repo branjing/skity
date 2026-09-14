@@ -255,10 +255,15 @@ def expect_report_has(path, field):
 
 
 def main():
-    if len(sys.argv) != 2:
+    global BACKEND, TARGET_PLATFORM
+    if len(sys.argv) not in (2, 3):
         print("usage: skity_font_cli_smoke.py <skity-font>", file=sys.stderr)
         return 2
 
+    if len(sys.argv) == 3:
+        BACKEND = sys.argv[2]
+        TARGET_PLATFORM = {"freetype": "linux-freetype", "fontconfig": "linux-fontconfig",
+                           "coretext": "macos-coretext", "directwrite": "windows-directwrite"}[BACKEND]
     skity_font = Path(sys.argv[1])
     if not skity_font.is_file():
         print(f"skity-font binary does not exist: {skity_font}", file=sys.stderr)

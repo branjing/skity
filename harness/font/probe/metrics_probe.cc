@@ -692,6 +692,13 @@ MetricsProbeResult RunMetricsProbe(const MetricsProbeRequest& request) {
     return result;
   }
 
+  if (!IsExplicitSourceCasePlatformAvailable(root, request.backend)) {
+    return BuildFailure(MetricsProbeStatus::kBackendUnavailable,
+                        validation.case_id, request.backend,
+                        "backend_unavailable",
+                        "case does not target the Linux FreeType host");
+  }
+
   if (validation.backend != request.backend) {
     MetricsProbeResult result = BuildFailure(
         MetricsProbeStatus::kSchemaValidationFailed, validation.case_id,

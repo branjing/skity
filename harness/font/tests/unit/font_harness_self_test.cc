@@ -14,11 +14,13 @@
 
 #include "harness/font/artifact/json_io.hpp"
 #include "harness/font/case/case_document.hpp"
+#include "harness/font/case/font_manager_contract.hpp"
 #include "harness/font/case/manifest_document.hpp"
 #include "harness/font/case/platform_target.hpp"
 #include "harness/font/case/repo_uri.hpp"
 #include "harness/font/compare/compare_engine.hpp"
 #include "harness/font/compare/path/path_normalizer.hpp"
+#include "harness/font/probe/backend_support.hpp"
 #if defined(_WIN32) && SKITY_FONT_HARNESS_HAS_DIRECTWRITE
 #include "harness/font/platform/directwrite/env_info.hpp"
 #endif
@@ -314,14 +316,15 @@ void AddMatchedTypefaceTables(Json::Value* root, int head_table_size) {
 }
 
 void RunFontManagerCompare(TempDir* temp, const Json::Value& expected,
-                           const Json::Value& actual, CompareResult* result) {
+                           const Json::Value& actual, CompareResult* result,
+                           const Json::Value* case_override = nullptr) {
   const std::filesystem::path case_path =
       temp->root() / "cases/font_manager.json";
   const std::filesystem::path expected_path =
       temp->root() / "artifacts/expected.json";
   const std::filesystem::path actual_path =
       temp->root() / "artifacts/actual.json";
-  WriteJson(case_path, MakeFontManagerCase());
+  WriteJson(case_path, case_override ? *case_override : MakeFontManagerCase());
   WriteJson(expected_path, expected);
   WriteJson(actual_path, actual);
 
@@ -539,6 +542,8 @@ TEST(FontHarnessCompareEngineTest,
      ShortCircuitsFontManagerCompareWhenAvailabilityDiffers) {
   TempDir temp("font_manager_availability");
   CompareResult result;
+  auto case_root = MakeFontManagerCase();
+  case_root["font_manager_expectation"]["matched"] = false;
   RunFontManagerCompare(
       &temp,
       MakeFontManagerArtifact(/*available=*/false, "Synthetic-Regular",
@@ -547,7 +552,7 @@ TEST(FontHarnessCompareEngineTest,
       MakeFontManagerArtifact(/*available=*/true, "Synthetic-Regular",
                               /*glyph_id=*/2, /*font_ascent=*/12.0,
                               /*scaler_ascent=*/12.0),
-      &result);
+      &result, &case_root);
 
   ExpectSingleDiff(result, "selection_mismatch",
                    "font_manager_probe.matched_typefaces[0].available");
@@ -943,6 +948,117 @@ TEST(FontHarnessPathNormalizerTest, DropsZeroLengthSegmentsAndRoundsPoints) {
   EXPECT_TRUE(normalized["contours"][0]["closed"].asBool());
   EXPECT_DOUBLE_EQ(0.0, normalized["verbs"][0]["points"][0]["x"].asDouble());
   EXPECT_DOUBLE_EQ(0.0, normalized["verbs"][0]["points"][0]["y"].asDouble());
+}
+
+TEST(FontHarnessFontManagerContractTest, PreservesNullEmptyAndMissingFamily) {
+  for (const auto& name :
+       {Json::Value(), Json::Value(""), Json::Value("missing")}) {
+    auto root = MakeFontManagerCase();
+    root["backend"] = "fontconfig";
+    root["platforms"][0] = "linux-fontconfig";
+    root["font_manager_request"]["entry"] = "MatchFamilyStyle";
+    root["font_manager_request"]["family_name"] = name;
+    ValidationContext errors;
+    ValidateFontManagerCase(root, &errors);
+    EXPECT_TRUE(errors.IsValid()) << WriteJsonString(errors.ToJson());
+    EXPECT_EQ(name, root["font_manager_request"]["family_name"]);
+  }
+  auto root = MakeFontManagerCase();
+  root["font_manager_request"].removeMember("family_name");
+  ValidationContext errors;
+  ValidateFontManagerCase(root, &errors);
+  EXPECT_TRUE(errors.IsValid());
+  EXPECT_FALSE(root["font_manager_request"].isMember("family_name"));
+}
+
+TEST(FontHarnessFontManagerContractTest, RequiresExplicitUnmatchedExpectation) {
+  auto root = MakeFontManagerCase();
+  auto artifact = MakeFontManagerArtifact(false, "", 0, 0, 0);
+  ValidationContext positive_errors;
+  ValidateFontManagerResult(root, artifact, &positive_errors);
+  EXPECT_FALSE(positive_errors.IsValid());
+  root["font_manager_expectation"]["matched"] = false;
+  ValidationContext absent_errors;
+  ValidateFontManagerResult(root, artifact, &absent_errors);
+  EXPECT_TRUE(absent_errors.IsValid());
+  artifact["font_manager_probe"]["matched_typefaces"][0]["available"] = true;
+  ValidationContext unexpected_match;
+  ValidateFontManagerResult(root, artifact, &unexpected_match);
+  EXPECT_FALSE(unexpected_match.IsValid());
+}
+
+TEST(FontHarnessFontManagerContractTest, RejectsIncompleteInventory) {
+  auto root = MakeFontManagerCase();
+  root["font_manager_expectation"]["inventory_count"] = 2;
+  auto artifact = MakeFontManagerArtifact(true, "Synthetic-Regular", 1, 10, 10);
+  auto& state = artifact["font_manager_probe"]["font_manager"];
+  state["family_count"] = 2;
+  state["family_names"] = Json::Value(Json::arrayValue);
+  state["family_names"].append("One");
+  ValidationContext missing;
+  ValidateFontManagerResult(root, artifact, &missing);
+  EXPECT_FALSE(missing.IsValid());
+  state["family_names"].append("Two");
+  ValidationContext complete;
+  ValidateFontManagerResult(root, artifact, &complete);
+  EXPECT_TRUE(complete.IsValid());
+}
+
+TEST(FontHarnessFontManagerContractTest, RejectsInvalidScalarAndExpectation) {
+  auto root = MakeFontManagerCase();
+  root["font_manager_request"]["entry"] = "MatchFamilyStyleCharacter";
+  root["font_manager_request"]["character"] = "U+D800";
+  root["font_manager_expectation"]["matched"] = "yes";
+  ValidationContext errors;
+  ValidateFontManagerCase(root, &errors);
+  EXPECT_FALSE(errors.IsValid());
+  EXPECT_GE(errors.Errors().size(), 2u);
+}
+
+TEST(FontHarnessPlatformTargetTest,
+     SeparatesLinuxExplicitAndSystemCapabilities) {
+  ASSERT_NE(nullptr, FindPlatformTargetInfo("linux-freetype"));
+  ASSERT_NE(nullptr, FindPlatformTargetInfo("linux-fontconfig"));
+  EXPECT_TRUE(PlatformTargetMatchesBackend("freetype", "linux-freetype"));
+  EXPECT_FALSE(IsHostFontProbeBackendAvailable("freetype"));
+  EXPECT_FALSE(IsHostFontProbeBackendAvailable("fontconfig"));
+#if SKITY_FONT_HARNESS_HAS_FREETYPE
+  EXPECT_TRUE(IsExplicitSourceProbeBackendAvailable("freetype"));
+#endif
+}
+
+TEST(FontHarnessCompareEngineTest, ExplicitAbsencePassesButLegacyAbsenceFails) {
+  TempDir temp("absence_contract");
+  auto absent = MakeFontManagerArtifact(false, "", 0, 0, 0);
+  CompareResult result;
+  RunFontManagerCompare(&temp, absent, absent, &result);
+  EXPECT_EQ(CompareStatus::kInputFailed, result.status);
+  auto root = MakeFontManagerCase();
+  root["font_manager_expectation"]["matched"] = false;
+  RunFontManagerCompare(&temp, absent, absent, &result, &root);
+  EXPECT_EQ(CompareStatus::kPass, result.status)
+      << WriteJsonString(result.report);
+}
+
+TEST(FontHarnessFontManagerContractTest, EmptyStyleSetCannotReturnATypeface) {
+  auto root = MakeFontManagerCase();
+  root["category"] = "family_style_set";
+  root["font_manager_request"]["entry"] = "MatchFamily";
+  root["font_manager_expectation"]["style_count"] = 0;
+  Json::Value artifact(Json::objectValue);
+  auto& operation = artifact["font_manager_probe"]["operation"];
+  operation["entry"] = "MatchFamily";
+  auto& styles = operation["style_set"];
+  styles["style_count"] = 0;
+  styles["styles"] = Json::Value(Json::arrayValue);
+  styles["match_style"]["typeface"]["available"] = true;
+  ValidationContext wrong;
+  ValidateFontManagerResult(root, artifact, &wrong);
+  EXPECT_FALSE(wrong.IsValid());
+  styles["match_style"]["typeface"]["available"] = false;
+  ValidationContext empty;
+  ValidateFontManagerResult(root, artifact, &empty);
+  EXPECT_TRUE(empty.IsValid());
 }
 
 }  // namespace
