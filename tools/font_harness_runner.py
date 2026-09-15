@@ -141,7 +141,7 @@ def validate_payload(case, artifact, repo=None):
                         require(image, field in image, "missing image " + field)
                     if image["byte_size"]:
                         require(image, image["has_buffer"] and bool(image.get("digest")), "missing pixels")
-                        if case["backend"] == "freetype":
+                        if case["backend"] in ("freetype", "fontconfig"):
                             require(image, len(bytes.fromhex(image["pixels_hex"])) == image["byte_size"], "incomplete pixel capture")
     elif category in ("font_manager", "family_style_set"):
         probe = artifact["font_manager_probe"]
@@ -164,10 +164,15 @@ def validate_payload(case, artifact, repo=None):
                     require(style, style["create_typeface"]["available"] and bool(style["style"]), "incomplete style face")
         else:
             checked_array(matches, 1, "matched typefaces")
-            require(matches, matches[0]["available"] == expectation.get("matched", True), "match violates expectation")
-        if "inventory_count" in expectation:
+            require(matches, isinstance(matches[0]["available"], bool), "invalid match availability")
+            # A system profile discovers installed coverage through the independent
+            # oracle; machines without CJK/emoji fonts may correctly return no face.
+            if ("matched" in expectation or case["backend"] != "fontconfig"
+                    or case.get("fontconfig_profile") != "system"):
+                require(matches, matches[0]["available"] == expectation.get("matched", True), "match violates expectation")
+        if case["backend"] == "fontconfig" or "inventory_count" in expectation:
             inventory = probe["font_manager"]
-            count = expectation["inventory_count"]
+            count = expectation.get("inventory_count", inventory["family_count"])
             names = checked_array(inventory["family_names"], count, "family inventory")
             require(inventory, inventory["family_count"] == count and len(set(names)) == count, "incomplete inventory")
         require(probe, probe.get("request_input") == case["font_manager_request"], "request input was not preserved")
@@ -182,6 +187,31 @@ def validate_payload(case, artifact, repo=None):
                     require(mapping, len(mapping) == 1 and mapping[0]["glyph_id"] != 0, "fallback lacks requested glyph")
     else:
         raise ValueError("unimplemented artifact category: " + category)
+
+
+def fontconfig_fingerprint(inventory):
+    """Fingerprint the exact configuration and installed files used by a manager."""
+    require(inventory, isinstance(inventory.get("version"), int), "missing Fontconfig version")
+    snapshot = {"version": inventory["version"]}
+    for key in ("files", "config_files"):
+        names = inventory[key]
+        require(names, isinstance(names, list) and all(isinstance(name, str) for name in names),
+                "invalid Fontconfig " + key)
+        paths = sorted({Path(name).resolve() for name in names})
+        entries = []
+        for path in paths:
+            if path.is_file():
+                entries.append({"path": str(path), "sha256": sha256(path)})
+            elif key == "config_files" and path.is_dir():
+                entries.append({"path": str(path), "directory": sorted(p.name for p in path.iterdir())})
+            else:
+                raise ValueError("Fontconfig input is missing: " + str(path))
+        snapshot[key] = entries
+    return snapshot
+
+
+def validate_fontconfig_environment(expected, actual):
+    require(actual, expected == actual, "Fontconfig environment differs: configuration, inventory, or version")
 
 
 def validate_oracle(case_path, artifact_path, repo, profile):
@@ -200,6 +230,11 @@ def validate_oracle(case_path, artifact_path, repo, profile):
         require(item, sha256(item["path"]) == item["sha256"], "stale oracle: " + key)
     for key, item in inputs.items():
         require(item, sha256(item["path"]) == item["sha256"], "stale oracle: " + key)
+    if case["backend"] == "fontconfig":
+        require(profile, profile in ("controlled", "system"), "Fontconfig requires a controlled or system profile")
+        require(case, case.get("fontconfig_profile", "controlled") == profile, "case Fontconfig profile mismatch")
+        validate_fontconfig_environment(provenance["fontconfig_environment"],
+                                       fontconfig_fingerprint(artifact["fontconfig_inventory"]))
     if profile == "controlled":
         files = {Path(name).resolve() for name in artifact["fontconfig_inventory"]["files"]}
         allowed = {Path(item["path"]).resolve() for key, item in inputs.items() if key.startswith("controlled_font_")}
@@ -236,6 +271,7 @@ def add_arguments(parser):
     parser.add_argument("--font-oracle-dir")
     parser.add_argument("--font-reference-oracle-dir", help="Check repeat Skia oracle payloads for deterministic output")
     parser.add_argument("--font-artifact-root")
+    parser.add_argument("--fontconfig-file", help="Explicit Fontconfig configuration for this run")
     parser.add_argument("--font-profile", default="explicit", choices=["explicit", "controlled", "system"])
 
 
@@ -252,6 +288,8 @@ def run_suite(runner, args):
     env.pop("DISPLAY", None)
     env.pop("WAYLAND_DISPLAY", None)
     env["SKITY_FONT_HARNESS_TEST_BINARY"] = executable
+    if args.fontconfig_file:
+        env["FONTCONFIG_FILE"] = str(Path(args.fontconfig_file).resolve())
     records = []
     sequence = 0
 
@@ -275,30 +313,37 @@ def run_suite(runner, args):
                         "backend": args.font_backend, "oracle": "skia" if kind != "harness_selftest" else "synthetic",
                         "stage": args.font_action, "error": error, "artifacts": artifacts})
 
-    actual_provenance = {}
-    if args.font_action in ("probe", "run"):
-        env_path = output / "env/skity.json"
-        invoke([executable, "env-info", "--backend", args.font_backend,
-                "--repo-root", repo, "--report", env_path], env_path)
-        git_head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True)
-        diff = subprocess.run(["git", "diff", "--binary", "HEAD"], cwd=repo, capture_output=True)
-        paths = subprocess.run(["git", "ls-files", "--others", "--exclude-standard", "-z"],
-                               cwd=repo, capture_output=True).stdout.split(b"\0")
-        untracked = {os.fsdecode(path): sha256(repo / os.fsdecode(path)) for path in paths
-                     if path and (repo / os.fsdecode(path)).is_file()}
-        runtime_libraries = {}
-        if sys.platform == "linux":
-            linked = subprocess.run(["ldd", executable], capture_output=True, text=True)
-            for name in re.findall(r"=> (/[^\s]+)", linked.stdout):
-                library = Path(name).resolve()
-                if library.is_file():
-                    runtime_libraries[str(library)] = sha256(library)
-        actual_provenance = {"runtime_libraries": runtime_libraries, "runner_binary": {"path": executable, "sha256": sha256(executable)},
-                             "case_environment": {"path": str(env_path), "sha256": sha256(env_path)},
-                             "skity_commit": git_head.stdout.strip(),
-                             "tracked_diff_sha256": hashlib.sha256(diff.stdout).hexdigest(),
-                             "untracked_files": untracked}
-        write_json(output / "env/source.json", actual_provenance)
+    try:
+        actual_provenance = {}
+        if args.font_action in ("probe", "run", "compare"):
+            env_path = output / ("env/skity-current.json" if args.font_action == "compare" else "env/skity.json")
+            invoke([executable, "env-info", "--backend", args.font_backend,
+                    "--repo-root", repo, "--report", env_path], env_path)
+            git_head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True)
+            diff = subprocess.run(["git", "diff", "--binary", "HEAD"], cwd=repo, capture_output=True)
+            paths = subprocess.run(["git", "ls-files", "--others", "--exclude-standard", "-z"],
+                                   cwd=repo, capture_output=True).stdout.split(b"\0")
+            untracked = {os.fsdecode(path): sha256(repo / os.fsdecode(path)) for path in paths
+                         if path and (repo / os.fsdecode(path)).is_file()}
+            runtime_libraries = {}
+            if sys.platform == "linux":
+                linked = subprocess.run(["ldd", executable], capture_output=True, text=True)
+                for name in re.findall(r"=> (/[^\s]+)", linked.stdout):
+                    library = Path(name).resolve()
+                    if library.is_file():
+                        runtime_libraries[str(library)] = sha256(library)
+            actual_provenance = {"runtime_libraries": runtime_libraries, "runner_binary": {"path": executable, "sha256": sha256(executable)},
+                                 "case_environment": {"path": str(env_path), "sha256": sha256(env_path)},
+                                 "skity_commit": git_head.stdout.strip(),
+                                 "tracked_diff_sha256": hashlib.sha256(diff.stdout).hexdigest(),
+                                 "untracked_files": untracked}
+            if args.font_backend == "fontconfig" and env_path.is_file():
+                environment = read_json(env_path)
+                if environment.get("ok"):
+                    actual_provenance["fontconfig_environment"] = fontconfig_fingerprint(environment["fontconfig_inventory"])
+            write_json(output / "env/source.json", actual_provenance)
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        return runner._create_infra_error("invalid_font_environment", str(error))
 
     if args.font_action == "cli-smoke":
         command = [sys.executable, repo / "harness/font/tests/smoke/skity_font_cli_smoke.py", executable, args.font_backend]
@@ -378,6 +423,9 @@ def run_suite(runner, args):
                         if code:
                             record(name, code, data.get("reason_code", "probe_failed"), kind, artifacts)
                             continue
+                        if args.font_backend == "fontconfig" and oracle is not None:
+                            validate_fontconfig_environment(oracle["provenance"]["fontconfig_environment"],
+                                                           actual_provenance["fontconfig_environment"])
                         validate_payload(case, data, repo)
                         data["provenance"] = dict(actual_provenance, case_sha256=sha256(path),
                                                   font_files=font_fingerprints(case, repo))
@@ -389,6 +437,11 @@ def run_suite(runner, args):
                         actual_data = read_json(actual)
                         validate_payload(case, actual_data, repo)
                         provenance = actual_data["provenance"]
+                        if args.font_backend == "fontconfig":
+                            validate_fontconfig_environment(oracle["provenance"]["fontconfig_environment"],
+                                                           provenance["fontconfig_environment"])
+                            validate_fontconfig_environment(provenance["fontconfig_environment"],
+                                                           actual_provenance["fontconfig_environment"])
                         require(provenance, provenance["case_sha256"] == sha256(path) and
                                 provenance["font_files"] == font_fingerprints(case, repo), "stale actual input")
                         require(provenance, provenance["runner_binary"]["sha256"] == sha256(executable), "stale actual binary")

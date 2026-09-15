@@ -192,11 +192,15 @@ void ValidateFontManagerResult(const Json::Value& root,
     }
   } else {
     const auto& matches = probe["matched_typefaces"];
+    const bool system_profile = root["backend"] == "fontconfig" &&
+                                root["fontconfig_profile"] == "system";
+    const bool require_match =
+        expectation.isMember("matched") || !system_profile;
     const bool matched =
         !expectation.isMember("matched") || expectation["matched"].asBool();
     if (!matches.isArray() || matches.size() != 1 || !matches[0].isObject() ||
         !matches[0]["available"].isBool() ||
-        matches[0]["available"].asBool() != matched) {
+        (require_match && matches[0]["available"].asBool() != matched)) {
       errors->AddError("$.font_manager_probe.matched_typefaces",
                        "match violates expectation");
     }

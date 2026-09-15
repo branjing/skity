@@ -987,6 +987,26 @@ TEST(FontHarnessFontManagerContractTest, RequiresExplicitUnmatchedExpectation) {
   EXPECT_FALSE(unexpected_match.IsValid());
 }
 
+TEST(FontHarnessFontManagerContractTest,
+     SystemProfileCanDiscoverAbsentCoverage) {
+  auto root = MakeFontManagerCase();
+  root["backend"] = "fontconfig";
+  root["fontconfig_profile"] = "system";
+  auto artifact = MakeFontManagerArtifact(false, "", 0, 0, 0);
+  ValidationContext absent;
+  ValidateFontManagerResult(root, artifact, &absent);
+  EXPECT_TRUE(absent.IsValid());
+  root["font_manager_expectation"]["matched"] = true;
+  ValidationContext required;
+  ValidateFontManagerResult(root, artifact, &required);
+  EXPECT_FALSE(required.IsValid());
+  root["font_manager_expectation"].removeMember("matched");
+  root["backend"] = "coretext";
+  ValidationContext other_backend;
+  ValidateFontManagerResult(root, artifact, &other_backend);
+  EXPECT_FALSE(other_backend.IsValid());
+}
+
 TEST(FontHarnessFontManagerContractTest, RejectsIncompleteInventory) {
   auto root = MakeFontManagerCase();
   root["font_manager_expectation"]["inventory_count"] = 2;
@@ -1021,7 +1041,11 @@ TEST(FontHarnessPlatformTargetTest,
   ASSERT_NE(nullptr, FindPlatformTargetInfo("linux-fontconfig"));
   EXPECT_TRUE(PlatformTargetMatchesBackend("freetype", "linux-freetype"));
   EXPECT_FALSE(IsHostFontProbeBackendAvailable("freetype"));
+#if SKITY_FONT_HARNESS_HAS_FONTCONFIG
+  EXPECT_TRUE(IsHostFontProbeBackendAvailable("fontconfig"));
+#else
   EXPECT_FALSE(IsHostFontProbeBackendAvailable("fontconfig"));
+#endif
 #if SKITY_FONT_HARNESS_HAS_FREETYPE
   EXPECT_TRUE(IsExplicitSourceProbeBackendAvailable("freetype"));
 #endif
